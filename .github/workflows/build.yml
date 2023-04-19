@@ -22,7 +22,9 @@ jobs:
         env:
           TYPE: ${{ github.event_name }}
           BASE: ${{ github.base_ref }}
-        run: ./.github/scripts/verify_changes.sh ${{ env.TYPE }} ${{ env.BASE }}
+        run: |
+          git diff --merge-base ${{ env.BASE }} --name-only |awk -F/ '{ print $1}'
+          ./.github/scripts/verify_changes.sh ${{ env.TYPE }} ${{ env.BASE }}
   product-metadata:
     # do not run build and test steps for docs changes
     # Following https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/troubleshooting-required-status-checks#handling-skipped-but-required-checks
