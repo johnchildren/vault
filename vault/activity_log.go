@@ -388,22 +388,28 @@ func (a *ActivityLog) saveCurrentSegmentToStorageLocked(ctx context.Context, for
 
 // :force: forces a save of tokens/entities even if the in-memory log is empty
 func (a *ActivityLog) saveCurrentSegmentInternal(ctx context.Context, force bool) error {
-	entityPath := fmt.Sprintf("%s%d/%d", activityEntityBasePath, a.currentSegment.startTimestamp, a.currentSegment.clientSequenceNumber)
-	// RFC (VLT-120) defines this as 1-indexed, but it should be 0-indexed
-	tokenPath := fmt.Sprintf("%s%d/0", activityTokenBasePath, a.currentSegment.startTimestamp)
+	_, err := a.saveSegmentInternal(ctx, force, a.currentSegment)
+	return err
+}
 
-	for _, client := range a.currentSegment.currentClients.Clients {
+func (a *ActivityLog) saveSegmentInternal(ctx context.Context, force bool, segment segmentInfo) ([]string, error) {
+	entityPath := fmt.Sprintf("%s%d/%d", activityEntityBasePath, segment.startTimestamp, segment.clientSequenceNumber)
+	// RFC (VLT-120) defines this as 1-indexed, but it should be 0-indexed
+	tokenPath := fmt.Sprintf("%s%d/0", activityTokenBasePath, segment.startTimestamp)
+
+	paths := make([]string, 0, 2)
+	for _, client := range segment.currentClients.Clients {
 		// Explicitly catch and throw clear error message if client ID creation and storage
 		// results in a []byte that doesn't assert into a valid string.
 		if !utf8.ValidString(client.ClientID) {
-			return fmt.Errorf("client ID %q is not a valid string:", client.ClientID)
+			return nil, fmt.Errorf("client ID %q is not a valid string:", client.ClientID)
 		}
 	}
 
-	if len(a.currentSegment.currentClients.Clients) > 0 || force {
-		clients, err := proto.Marshal(a.currentSegment.currentClients)
+	if len(segment.currentClients.Clients) > 0 || force {
+		clients, err := proto.Marshal(segment.currentClients)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		a.logger.Trace("writing segment", "path", entityPath)
@@ -412,31 +418,32 @@ func (a *ActivityLog) saveCurrentSegmentInternal(ctx context.Context, force bool
 			Value: clients,
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
+		paths = append(paths, entityPath)
 	}
 
 	// We must still allow for the tokenCount of the current segment to
 	// be written to storage, since if we remove this code we will incur
 	// data loss for one segment's worth of TWEs.
-	if len(a.currentSegment.tokenCount.CountByNamespaceID) > 0 || force {
+	if len(segment.tokenCount.CountByNamespaceID) > 0 || force {
 		// We can get away with simply using the oldest version stored because
 		// the storing of versions was introduced at the same time as this code.
 		oldestVersion, oldestUpgradeTime, err := a.core.FindOldestVersionTimestamp()
 		switch {
 		case err != nil:
 			a.logger.Error(fmt.Sprintf("unable to retrieve oldest version timestamp: %s", err.Error()))
-		case len(a.currentSegment.tokenCount.CountByNamespaceID) > 0 &&
+		case len(segment.tokenCount.CountByNamespaceID) > 0 &&
 			(oldestUpgradeTime.Add(time.Duration(trackedTWESegmentPeriod * time.Hour)).Before(time.Now())):
 			a.logger.Error(fmt.Sprintf("storing nonzero token count over a month after vault was upgraded to %s", oldestVersion))
 		default:
-			if len(a.currentSegment.tokenCount.CountByNamespaceID) > 0 {
+			if len(segment.tokenCount.CountByNamespaceID) > 0 {
 				a.logger.Info("storing nonzero token count")
 			}
 		}
-		tokenCount, err := proto.Marshal(a.currentSegment.tokenCount)
+		tokenCount, err := proto.Marshal(segment.tokenCount)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		a.logger.Trace("writing segment", "path", tokenPath)
@@ -445,10 +452,11 @@ func (a *ActivityLog) saveCurrentSegmentInternal(ctx context.Context, force bool
 			Value: tokenCount,
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
+		paths = append(paths, tokenPath)
 	}
-	return nil
+	return paths, nil
 }
 
 // parseSegmentNumberFromPath returns the segment number from a path

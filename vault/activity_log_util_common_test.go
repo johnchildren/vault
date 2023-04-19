@@ -183,7 +183,7 @@ func writeTokenSegment(t *testing.T, core *Core, ts time.Time, index int, item *
 // makeSegmentPath formats the path for a segment at a particular time and index
 func makeSegmentPath(t *testing.T, typ string, ts time.Time, index int) string {
 	t.Helper()
-	return fmt.Sprintf("%s%s%d/%d", ActivityPrefix, typ, ts.Unix(), index)
+	return fmt.Sprintf("%s%s%d/%d", ActivityPrefix, typ, ts.UTC().Unix(), index)
 }
 
 // TestSegmentFileReader_BadData verifies that the reader returns errors when the data is unable to be parsed
